@@ -6,17 +6,17 @@ let startVideo = false
 export default async function setupAutoplay() {
   const autoplay = await getStorageItem(STORAGE_KEYS.AUTOPLAY)
   if (!autoplay) return
-  console.log(localStorage.getItem("wistia-video-progress-mq75g1wjtb"))
+
   const nextButton = getNextButton()
-  const video = await getVideo()
+  if (nextButton == null) return
 
   if (startVideo) {
     const playButton = await getPlayButton()
-    console.log(playButton)
     playButton.click()
   }
-  startVideo = false
 
+  startVideo = false
+  const video = await getVideo()
   video.addEventListener("ended", () => {
     startVideo = true
     nextButton.click()
@@ -36,20 +36,29 @@ function getNextButton() {
 }
 
 function getPlayButton() {
-  const button =
-    document.querySelector(".w-big-play-button") || getResumeButton()
-  if (button) return Promise.resolve(button)
+  const hasResumeButton = getWistiaData().resume_time > 0
+  if (hasResumeButton) {
+    return getResumeButton()
+  } else {
+    return getStartButton()
+  }
+}
 
+function getStartButton() {
   return new Promise(resolve => {
     const observer = new MutationObserver((mutationList, o) => {
       mutationList.forEach(mutation => {
         if (
           mutation.type === "childList" &&
           (mutation.target.matches(".w-big-play-button") ||
-            mutation.textContent.includes("Skip to where you left off"))
+            mutation.target.querySelector(".w-big-play-button"))
         ) {
           o.disconnect()
-          resolve(mutation.target)
+          if (mutation.target.matches(".w-big-play-button")) {
+            resolve(mutation.target)
+          } else {
+            resolve(mutation.target.querySelector(".w-big-play-button"))
+          }
         }
       })
     })
@@ -57,20 +66,51 @@ function getPlayButton() {
       subtree: true,
       childList: true
     })
+
+    const button = document.querySelector(".w-big-play-button")
+    if (button) {
+      observer.disconnect()
+      resolve(button)
+    }
   })
 }
 
 function getResumeButton() {
-  const buttons = [...document.querySelectorAll("w-chrome a")]
-  return buttons.find(button => {
-    return button.textContent.includes("Skip to where you left off")
+  return new Promise(resolve => {
+    const observer = new MutationObserver((mutationList, o) => {
+      mutationList.forEach(mutation => {
+        if (
+          mutation.type === "childList" &&
+          mutation.target.textContent.includes("Skip to where you left off")
+        ) {
+          o.disconnect()
+          if (mutation.target.matches("a")) return resolve(mutation.target)
+          const buttons = [...mutation.target.querySelectorAll("a")]
+          const resumeButton = buttons.find(button => {
+            return button.textContent.includes("Skip to where you left off")
+          })
+          if (resumeButton) resolve(resumeButton)
+        }
+      })
+    })
+
+    observer.observe(document.querySelector(".wistia_embed"), {
+      subtree: true,
+      childList: true
+    })
+
+    const buttons = [...document.querySelectorAll(".w-chrome a")]
+    const resumeButton = buttons.find(button => {
+      return button.textContent.includes("Skip to where you left off")
+    })
+    if (resumeButton) {
+      observer.disconnect()
+      resolve(resumeButton)
+    }
   })
 }
 
 function getVideo() {
-  const video = document.querySelector(".w-video-wrapper > video")
-  if (video) return Promise.resolve(video)
-
   return new Promise(resolve => {
     const observer = new MutationObserver((mutationList, o) => {
       mutationList.forEach(mutation => {
@@ -84,9 +124,27 @@ function getVideo() {
       subtree: true,
       childList: true
     })
+
+    const video = document.querySelector(".w-video-wrapper > video")
+    if (video) {
+      observer.disconnect()
+      resolve(video)
+    }
   })
 }
 
-// TODO: I can get the wistia information from local storage. I can also get the ID of the element from the wistia div id
-// It may have a 1 appended to the end for some reason
-// Do some trickery to check which of the two buttons for playing the video I should load
+function getWistiaId() {
+  const wistiaEmbed = document.querySelector(".wistia_embed")
+  const wistiaIdClass = Array.from(wistiaEmbed.classList).find(c => {
+    return c.startsWith("wistia_async_")
+  })
+
+  if (wistiaIdClass != null) return wistiaIdClass.replace(/^wistia_async_/, "")
+  return wistiaEmbed.id.replace(/-1$/, "")
+}
+
+function getWistiaData() {
+  const localWistiaData = JSON.parse(localStorage.getItem("wistia")) || {}
+  const currentWistiaVideo = localWistiaData[window.location] || {}
+  return currentWistiaVideo[getWistiaId()] || { resume_time: 0 }
+}
